@@ -1,0 +1,18 @@
+onRun started
+pluginDirStr=C:/Users/winso/Documents/MuseScore4/Plugins
+pluginDir=C:/Users/winso/Documents/MuseScore4/Plugins
+ms4Dir=C:/Users/winso/Documents/MuseScore4
+scoresDir=C:/Users/winso/Documents/MuseScore4/Scores
+curScore OK
+curScore saved
+scoreName=Bitch Lasagna.mscx
+nameNoExt=Bitch Lasagna
+origPath=C:/Users/winso/Documents/MuseScore4/Scores/Bitch Lasagna/Bitch Lasagna.mscx
+copyPath=C:/Users/winso/Documents/MuseScore4/Scores/Bitch Lasagna - Copy/Bitch Lasagna - Copy.mscx
+outPath=C:/Users/winso/Documents/MuseScore4/Scores/Bitch Lasagna/Bitch Lasagna_diff.mscx
+orig exists OK
+copy exists OK
+writing diff ps1 to C:/Users/winso/Documents/MuseScore4/Plugins/musescore-diff.ps1
+wrote review ps1 to C:/Users/winso/Documents/MuseScore4/Plugins/musescore-diff-review.ps1
+writing bat to C:/Users/winso/Documents/MuseScore4/Plugins/musescore-diff.bat
+launching bat
