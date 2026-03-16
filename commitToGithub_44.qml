@@ -47,22 +47,49 @@ MuseScore {
         var linkFileWin  = linkFile.replace(/\//g, "\\");
         var setupPs1Win  = setupPs1.replace(/\//g, "\\");
 
-        // ---- always write the commit bat ----
-        fileIO.source = commitBat;
-        if (fileIO.exists()) fileIO.remove();
-        fileIO.write([
+        var lastDot   = scoreName.lastIndexOf(".");
+        var nameNoExt = lastDot >= 0 ? scoreName.substring(0, lastDot) : scoreName;
+        var scoreFile = nameNoExt + ".mscz";
+
+        // ---- check for residual diff log (bypasses remote check if present) ----
+        fileIO.source = scoresDir + "/" + nameNoExt + "_diff.log";
+        var hasDiffLog = fileIO.exists();
+
+        // ---- always write the commit bat (include log cleanup when applicable) ----
+        var batLines = [
             "@echo off",
             "cd /d \"" + scoresDirWin + "\"",
             "if exist \"" + scoreName + ".mscz\" git add \"" + scoreName + ".mscz\"",
             "if exist \"" + scoreName + ".mscx\" git add \"" + scoreName + ".mscx\"",
             "git commit -m \"Commit from MuseScore plugin: " + scoreName + "\"",
-            "git push",
-            "pause"
-        ].join("\r\n"));
+            "git push"
+        ];
+        if (hasDiffLog) batLines.push("del \"" + nameNoExt + "_diff.log\"");
+        batLines.push("pause");
+
+        fileIO.source = commitBat;
+        if (fileIO.exists()) fileIO.remove();
+        fileIO.write(batLines.join("\r\n"));
 
         // ---- Step 1: check for github_link.txt in QML (no terminal opened yet) ----
         fileIO.source = linkFile;
         var needsSetup = !fileIO.exists();
+
+        var checkPs1    = pluginDir + "/musescore-git-check.ps1";
+        var checkBat    = pluginDir + "/musescore-git-check.bat";
+        var checkPs1Win = checkPs1.replace(/\//g, "\\");
+
+        // ---- Step 2a: diff log present — force-push local, skip remote check ----
+        if (hasDiffLog) {
+            Qt.openUrlExternally("file:///" + commitBat.replace(/\\/g, "/"));
+            var cleanupLog = Qt.createQmlObject('import QtQuick 2.0; Timer { interval: 1500; repeat: false }', commitPlugin, "cleanupTimerLog");
+            cleanupLog.triggered.connect(function() {
+                fileIO.source = commitBat; if (fileIO.exists()) fileIO.remove();
+                quit();
+            });
+            cleanupLog.start();
+            return;
+        }
 
         if (needsSetup) {
             // ---- Step 2: show popup asking for the repo URL ----
@@ -148,16 +175,89 @@ MuseScore {
 
             Qt.openUrlExternally("file:///" + setupBat.replace(/\\/g, "/"));
         } else {
-            // ---- Step 3: link exists, go straight to commit ----
-            Qt.openUrlExternally("file:///" + commitBat.replace(/\\/g, "/"));
+            // ---- Step 3: link exists — check for unpulled changes first ----
+            fileIO.source = checkPs1;
+            if (fileIO.exists()) fileIO.remove();
+            fileIO.write([
+"param($scoresDir, $scoreFile, $nameNoExt, $commitBat)",
+"Set-Location $scoresDir",
+"",
+"# Fetch silently; ignore errors (offline, no remote, etc.)",
+"git fetch origin 2>&1 | Out-Null",
+"",
+"# Resolve upstream branch; if none is set, skip the check and commit",
+"$upstream = git rev-parse --abbrev-ref '@{upstream}' 2>&1",
+"if ($LASTEXITCODE -ne 0) { Start-Process $commitBat; exit }",
+"",
+"# Any commits on remote that touch this file and aren't in local HEAD?",
+"$unpulled = git log \"HEAD..${upstream}\" --oneline -- $scoreFile 2>&1",
+"if ($LASTEXITCODE -ne 0 -or -not $unpulled) { Start-Process $commitBat; exit }",
+"",
+"# Remote has changes — check out that tree into a temp worktree",
+"$tmpTree = Join-Path ([System.IO.Path]::GetTempPath()) ('ms_pull_' + [System.Guid]::NewGuid().ToString('N').Substring(0,8))",
+"git worktree add --detach $tmpTree $upstream 2>&1 | Out-Null",
+"",
+"$success = $false",
+"$remoteFile = Join-Path $tmpTree $scoreFile",
+"if (Test-Path $remoteFile) {",
+"    Add-Type -AssemblyName System.IO.Compression.FileSystem",
+"    $copyDir  = Join-Path $scoresDir ($nameNoExt + ' - Copy')",
+"    $copyMscx = Join-Path $copyDir  ($nameNoExt + ' - Copy.mscx')",
+"    if (-not (Test-Path $copyDir)) { New-Item -ItemType Directory -Path $copyDir | Out-Null }",
+"    try {",
+"        $zip   = [System.IO.Compression.ZipFile]::OpenRead($remoteFile)",
+"        $entry = $zip.Entries | Where-Object { $_.Name -like '*.mscx' } | Select-Object -First 1",
+"        if ($entry) {",
+"            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $copyMscx, $true)",
+"            $success = $true",
+"        }",
+"        $zip.Dispose()",
+"    } catch {}",
+"}",
+"git worktree remove --force $tmpTree 2>&1 | Out-Null",
+"",
+"if ($success) {",
+"    Add-Type -AssemblyName System.Windows.Forms",
+"    Add-Type -AssemblyName System.Drawing",
+"    [System.Windows.Forms.Application]::EnableVisualStyles()",
+"    [System.Windows.Forms.MessageBox]::Show(",
+"        'Remote changes were found for \"' + $nameNoExt + '\".' + [char]13 + [char]10 + [char]13 + [char]10 +",
+"        'The remote version has been saved to:' + [char]13 + [char]10 +",
+"        '  ' + (Join-Path $copyDir ($nameNoExt + ' - Copy.mscx')) + [char]13 + [char]10 + [char]13 + [char]10 +",
+"        'Please run MuseScore Diff to review differences before committing.',",
+"        'Unpulled Changes Detected',",
+"        [System.Windows.Forms.MessageBoxButtons]::OK,",
+"        [System.Windows.Forms.MessageBoxIcon]::Warning",
+"    ) | Out-Null",
+"} else {",
+"    # Could not extract remote version — fall back to committing",
+"    Start-Process $commitBat",
+"}"
+            ].join("\n"));
+
+            fileIO.source = checkBat;
+            if (fileIO.exists()) fileIO.remove();
+            fileIO.write(
+                "@echo off\r\n" +
+                "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden" +
+                " -File \"" + checkPs1Win + "\"" +
+                " \"" + scoresDirWin + "\"" +
+                " \"" + scoreFile + "\"" +
+                " \"" + nameNoExt + "\"" +
+                " \"" + commitBatWin + "\"\r\n"
+            );
+
+            Qt.openUrlExternally("file:///" + checkBat.replace(/\\/g, "/"));
         }
 
         // Setup files are loaded by their processes well within 1.5 s.
         // commitBat is kept alive when needsSetup — the PS1 launches it after cloning.
         var cleanup = Qt.createQmlObject('import QtQuick 2.0; Timer { interval: 1500; repeat: false }', commitPlugin, "cleanupTimer");
         cleanup.triggered.connect(function() {
-            fileIO.source = setupBat; if (fileIO.exists()) fileIO.remove();
-            fileIO.source = setupPs1; if (fileIO.exists()) fileIO.remove();
+            fileIO.source = setupBat;  if (fileIO.exists()) fileIO.remove();
+            fileIO.source = setupPs1;  if (fileIO.exists()) fileIO.remove();
+            fileIO.source = checkPs1;  if (fileIO.exists()) fileIO.remove();
+            fileIO.source = checkBat;  if (fileIO.exists()) fileIO.remove();
             if (!needsSetup) { fileIO.source = commitBat; if (fileIO.exists()) fileIO.remove(); }
             quit();
         });
