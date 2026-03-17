@@ -51,11 +51,12 @@ MuseScore {
         var nameNoExt = lastDot >= 0 ? scoreName.substring(0, lastDot) : scoreName;
         var scoreFile = nameNoExt + ".mscz";
 
-        // ---- check for residual diff log (bypasses remote check if present) ----
-        fileIO.source = scoresDir + "/" + nameNoExt + "_diff.log";
-        var hasDiffLog = fileIO.exists();
+        // ---- diff marker: created by MuseScore Diff at <Scores>/<Name>/<Name>_diff.log.txt ----
+        var diffLogTxt = scoresDir + "/" + nameNoExt + "/" + nameNoExt + "_diff.log.txt";
+        fileIO.source = diffLogTxt;
+        var hasDiffLogTxt = fileIO.exists();
 
-        // ---- always write the commit bat (include log cleanup when applicable) ----
+        // ---- always write the normal + force commit bats ----
         var batLines = [
             "@echo off",
             "cd /d \"" + scoresDirWin + "\"",
@@ -64,12 +65,25 @@ MuseScore {
             "git commit -m \"Commit from MuseScore plugin: " + scoreName + "\"",
             "git push"
         ];
-        if (hasDiffLog) batLines.push("del \"" + nameNoExt + "_diff.log\"");
         batLines.push("pause");
 
         fileIO.source = commitBat;
         if (fileIO.exists()) fileIO.remove();
         fileIO.write(batLines.join("\r\n"));
+
+        var forceBat = pluginDir + "/musescore-git-push-force.bat";
+        var forceBatWin = forceBat.replace(/\//g, "\\");
+        fileIO.source = forceBat;
+        if (fileIO.exists()) fileIO.remove();
+        fileIO.write([
+            "@echo off",
+            "cd /d \"" + scoresDirWin + "\"",
+            "if exist \"" + scoreName + ".mscz\" git add \"" + scoreName + ".mscz\"",
+            "if exist \"" + scoreName + ".mscx\" git add \"" + scoreName + ".mscx\"",
+            "git commit -m \"Commit from MuseScore plugin: " + scoreName + "\"",
+            "git push --force",
+            "pause"
+        ].join("\r\n"));
 
         // ---- Step 1: check for github_link.txt in QML (no terminal opened yet) ----
         fileIO.source = linkFile;
@@ -78,18 +92,6 @@ MuseScore {
         var checkPs1    = pluginDir + "/musescore-git-check.ps1";
         var checkBat    = pluginDir + "/musescore-git-check.bat";
         var checkPs1Win = checkPs1.replace(/\//g, "\\");
-
-        // ---- Step 2a: diff log present — force-push local, skip remote check ----
-        if (hasDiffLog) {
-            Qt.openUrlExternally("file:///" + commitBat.replace(/\\/g, "/"));
-            var cleanupLog = Qt.createQmlObject('import QtQuick 2.0; Timer { interval: 1500; repeat: false }', commitPlugin, "cleanupTimerLog");
-            cleanupLog.triggered.connect(function() {
-                fileIO.source = commitBat; if (fileIO.exists()) fileIO.remove();
-                quit();
-            });
-            cleanupLog.start();
-            return;
-        }
 
         if (needsSetup) {
             // ---- Step 2: show popup asking for the repo URL ----
@@ -179,7 +181,7 @@ MuseScore {
             fileIO.source = checkPs1;
             if (fileIO.exists()) fileIO.remove();
             fileIO.write([
-"param($scoresDir, $scoreFile, $nameNoExt, $commitBat)",
+"param($scoresDir, $scoreFile, $nameNoExt, $commitBat, $forceBat, $diffLogTxt)",
 "Set-Location $scoresDir",
 "",
 "# Fetch silently; ignore errors (offline, no remote, etc.)",
@@ -192,6 +194,9 @@ MuseScore {
 "# Any commits on remote that touch this file and aren't in local HEAD?",
 "$unpulled = git log \"HEAD..${upstream}\" --oneline -- $scoreFile 2>&1",
 "if ($LASTEXITCODE -ne 0 -or -not $unpulled) { Start-Process $commitBat; exit }",
+"",
+"# Remote has changes for this file. If we've already diffed (marker exists), force-push local to replace remote.",
+"if (Test-Path $diffLogTxt) { Start-Process $forceBat; exit }",
 "",
 "# Remote has changes — check out that tree into a temp worktree",
 "$tmpTree = Join-Path ([System.IO.Path]::GetTempPath()) ('ms_pull_' + [System.Guid]::NewGuid().ToString('N').Substring(0,8))",
@@ -244,7 +249,9 @@ MuseScore {
                 " \"" + scoresDirWin + "\"" +
                 " \"" + scoreFile + "\"" +
                 " \"" + nameNoExt + "\"" +
-                " \"" + commitBatWin + "\"\r\n"
+                " \"" + commitBatWin + "\"" +
+                " \"" + forceBatWin + "\"" +
+                " \"" + diffLogTxt.replace(/\//g, "\\") + "\"\r\n"
             );
 
             Qt.openUrlExternally("file:///" + checkBat.replace(/\\/g, "/"));
@@ -258,6 +265,7 @@ MuseScore {
             fileIO.source = setupPs1;  if (fileIO.exists()) fileIO.remove();
             fileIO.source = checkPs1;  if (fileIO.exists()) fileIO.remove();
             fileIO.source = checkBat;  if (fileIO.exists()) fileIO.remove();
+            fileIO.source = forceBat; if (fileIO.exists()) fileIO.remove();
             if (!needsSetup) { fileIO.source = commitBat; if (fileIO.exists()) fileIO.remove(); }
             quit();
         });

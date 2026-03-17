@@ -1,0 +1,2 @@
+@echo off
+powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "C:\Users\Winson Wang\OneDrive\Documents\MuseScore4\Plugins\musescore-git-check.ps1" "C:\Users\Winson Wang\OneDrive\Documents\MuseScore4\Scores" "Bitch Lasagna.mscz" "Bitch Lasagna" "C:\Users\Winson Wang\OneDrive\Documents\MuseScore4\Plugins\musescore-git-push.bat" "C:\Users\Winson Wang\OneDrive\Documents\MuseScore4\Plugins\musescore-git-push-force.bat" "C:\Users\Winson Wang\OneDrive\Documents\MuseScore4\Scores\Bitch Lasagna\Bitch Lasagna_diff.log.txt"

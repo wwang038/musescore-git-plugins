@@ -4,3 +4,4 @@ if exist "Bitch Lasagna.mscz" git add "Bitch Lasagna.mscz"
 git commit -m "Commit from MuseScore plugin: Bitch Lasagna"
 git push
 pause
+del "%~f0"

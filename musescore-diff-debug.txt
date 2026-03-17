@@ -4,12 +4,10 @@ pluginDir=C:/Users/Winson Wang/OneDrive/Documents/MuseScore4/Plugins
 ms4Dir=C:/Users/Winson Wang/OneDrive/Documents/MuseScore4
 scoresDir=C:/Users/Winson Wang/OneDrive/Documents/MuseScore4/Scores
 curScore OK
-curScore saved
 scoreName=Bitch Lasagna
 nameNoExt=Bitch Lasagna
-orig: flat mscz -> will extract mscx
 origPath=C:/Users/Winson Wang/OneDrive/Documents/MuseScore4/Scores/Bitch Lasagna.mscx
-origMsczPath=C:/Users/Winson Wang/OneDrive/Documents/MuseScore4/Scores/Bitch Lasagna.mscz
+msczPath=C:/Users/Winson Wang/OneDrive/Documents/MuseScore4/Scores/Bitch Lasagna.mscz
 copyPath=C:/Users/Winson Wang/OneDrive/Documents/MuseScore4/Scores/Bitch Lasagna - Copy/Bitch Lasagna - Copy.mscx
 outPath=C:/Users/Winson Wang/OneDrive/Documents/MuseScore4/Scores/Bitch Lasagna_diff.mscx
 orig exists OK

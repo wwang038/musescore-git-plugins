@@ -11,7 +11,7 @@ import FileIO 3.0
 
 MuseScore {
     id: diffPlugin
-    title: "MuseScore Diff"
+    title: "MuseScore Diff2"
     categoryCode: "composing-arranging-tools"
     menuPath: "Plugins.MuseScore Diff"
     description: "LCS measure diff against NAME - Copy"
@@ -66,10 +66,6 @@ MuseScore {
         }
         dbg(log, "curScore OK");
 
-        // Force-save the current score to disk before diffing so the .mscx reflects latest edits.
-        writeScore(curScore, curScore.path, "mscx");
-        dbg(log, "curScore saved");
-
         var scoreName = curScore.scoreName;
         dbg(log, "scoreName=" + scoreName);
         if (!scoreName || scoreName === "") {
@@ -83,43 +79,24 @@ MuseScore {
         var nameNoExt = lastDot >= 0 ? scoreName.substring(0, lastDot) : scoreName;
         dbg(log, "nameNoExt=" + nameNoExt);
 
-        // ---- resolve orig: flat .mscx > flat .mscz > subdirectory .mscx ----
-        var flatOrigMscx   = scoresDir + "/" + nameNoExt + ".mscx";
-        var flatOrigMscz   = scoresDir + "/" + nameNoExt + ".mscz";
-        var subdirOrigMscx = scoresDir + "/" + nameNoExt + "/" + nameNoExt + ".mscx";
-
-        var origPath;
-        var origMsczPath = "";  // set when source is .mscz; PS1 will extract before diffing
-        fileIO.source = flatOrigMscx;
-        if (fileIO.exists()) {
-            origPath = flatOrigMscx;
-            dbg(log, "orig: flat mscx");
-        } else {
-            fileIO.source = flatOrigMscz;
-            if (fileIO.exists()) {
-                origMsczPath = flatOrigMscz;
-                origPath     = flatOrigMscx;  // extraction target
-                dbg(log, "orig: flat mscz -> will extract mscx");
-            } else {
-                origPath = subdirOrigMscx;
-                dbg(log, "orig: subdir mscx (fallback)");
-            }
-        }
-
+        // Layout invariant: originals are flat in Scores/
+        // - Current score saved as: Scores/NAME.mscx
+        // - Remote copy extracted to: Scores/NAME - Copy/NAME - Copy.mscx
+        var origPath = scoresDir + "/" + nameNoExt + ".mscx";
+        var msczPath = scoresDir + "/" + nameNoExt + ".mscz";
         var copyPath = scoresDir + "/" + nameNoExt + " - Copy/" + nameNoExt + " - Copy.mscx";
-        var outPath  = origMsczPath
-            ? scoresDir + "/" + nameNoExt + "_diff.mscx"
-            : scoresDir + "/" + nameNoExt + "/" + nameNoExt + "_diff.mscx";
+        var outPath  = scoresDir + "/" + nameNoExt + "_diff.mscx";
+        dbg(log, "origPath=" + origPath);
+        dbg(log, "msczPath=" + msczPath);
+        dbg(log, "copyPath=" + copyPath);
+        dbg(log, "outPath="  + outPath);
 
-        dbg(log, "origPath="     + origPath);
-        dbg(log, "origMsczPath=" + origMsczPath);
-        dbg(log, "copyPath="     + copyPath);
-        dbg(log, "outPath="      + outPath);
-
-        // Existence check: use .mscz source path when extracting, else origPath
-        fileIO.source = origMsczPath || origPath;
-        if (!fileIO.exists()) {
-            dbg(log, "ABORT: original not found");
+        fileIO.source = origPath;
+        var hasOrigMscx = fileIO.exists();
+        fileIO.source = msczPath;
+        var hasOrigMscz = fileIO.exists();
+        if (!hasOrigMscx && !hasOrigMscz) {
+            dbg(log, "ABORT: original .mscx/.mscz not found");
             writeFile(debugPath, log.join("\n"));
             Qt.openUrlExternally("file:///" + debugPath.replace(/\\/g, "/"));
             quit(); return;
@@ -140,25 +117,32 @@ MuseScore {
         // PowerShell single-quoted strings ( '...' ) sit fine inside JS double-quoted strings.
         // PowerShell double-quoted strings that contain literal " are written as \" in JS.
         var ps1 = [
-"param($orig, $copy, $out, $origMscz = '')",
+"param($orig, $copy, $out, $mscz)",
 "",
 "# Write all errors to log so we can see them",
 "$logPath = [System.IO.Path]::ChangeExtension($out, '.log.txt')",
 "function Log($msg) { Add-Content -Path $logPath -Value $msg }",
 "Log 'PS started'",
 "",
-"# If the source score is .mscz, extract its embedded .mscx to $orig before diffing",
-"if ($origMscz -ne '') {",
-"    Log ('extracting mscz: ' + $origMscz)",
-"    Add-Type -AssemblyName System.IO.Compression.FileSystem",
-"    $zip   = [System.IO.Compression.ZipFile]::OpenRead($origMscz)",
-"    $entry = $zip.Entries | Where-Object { $_.Name -like '*.mscx' } | Select-Object -First 1",
-"    if ($entry) { [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $orig, $true) }",
-"    $zip.Dispose()",
-"    Log ('extracted to: ' + $orig)",
-"}",
-"",
 "try {",
+"",
+"# If original .mscx is missing but .mscz exists, extract the embedded .mscx to $orig",
+"if (-not (Test-Path $orig) -and (Test-Path $mscz)) {",
+"    try {",
+"        Add-Type -AssemblyName System.IO.Compression.FileSystem",
+"        $zip = [System.IO.Compression.ZipFile]::OpenRead($mscz)",
+"        $entry = $zip.Entries | Where-Object { $_.Name -like '*.mscx' } | Select-Object -First 1",
+"        if ($entry) {",
+"            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $orig, $true)",
+"            Log ('Extracted original from mscz -> ' + $orig)",
+"        } else {",
+"            Log 'No .mscx entry found inside .mscz'",
+"        }",
+"        $zip.Dispose()",
+"    } catch {",
+"        Log ('Failed to extract .mscx from .mscz: ' + $_.Exception.Message)",
+"    }",
+"}",
 "",
 "$ox = [xml](Get-Content -Path $orig -Raw -Encoding UTF8)",
 "$cx = [xml](Get-Content -Path $copy -Raw -Encoding UTF8)",
@@ -607,7 +591,7 @@ MuseScore {
 
         // ---- review dialog PS1 (Windows Forms, runs after diff completes) --
         var rev = [
-"param($orig, $out, $origMscz = '')",
+"param($orig, $out)",
 "Add-Type -AssemblyName System.Windows.Forms",
 "Add-Type -AssemblyName System.Drawing",
 "[System.Windows.Forms.Application]::EnableVisualStyles()",
@@ -670,7 +654,6 @@ MuseScore {
 "        [System.Windows.Forms.MessageBoxIcon]::Warning",
 "    )",
 "    if ($answer -eq [System.Windows.Forms.DialogResult]::Yes) {",
-"        # Strip diff colours and boundary markers from the edited output",
 "        $xml = [xml](Get-Content -Path $out -Raw -Encoding UTF8)",
 "        foreach ($cn in @($xml.SelectNodes('//color'))) { $cn.ParentNode.RemoveChild($cn) | Out-Null }",
 "        $diffMarkChars = @([string][char]9654, [string][char]8214, [string][char]9664)",
@@ -678,35 +661,8 @@ MuseScore {
 "            $t = $st.SelectSingleNode('text')",
 "            if ($t -and $diffMarkChars -contains $t.InnerText.Trim()) { $st.ParentNode.RemoveChild($st) | Out-Null }",
 "        }",
-"        # Always write the cleaned .mscx first",
 "        $xml.Save($orig)",
-"        # If the repository format was .mscz, repack the .mscx into a fresh .mscz zip",
-"        $savedPath = $orig",
-"        if ($origMscz -ne '') {",
-"            Add-Type -AssemblyName System.IO.Compression.FileSystem",
-"            if (Test-Path $origMscz) { Remove-Item $origMscz -Force }",
-"            $newZip = [System.IO.Compression.ZipFile]::Open($origMscz, [System.IO.Compression.ZipArchiveMode]::Create)",
-"            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($newZip, $orig, [System.IO.Path]::GetFileName($orig)) | Out-Null",
-"            $newZip.Dispose()",
-"            $savedPath = $origMscz",
-"        }",
-"        # Remove the diff output file",
 "        Remove-Item -Path $out -Force",
-"        # Remove the remote copy directory",
-"        $nameNoExt = [System.IO.Path]::GetFileNameWithoutExtension($orig)",
-"        $copyDir = Join-Path ([System.IO.Path]::GetDirectoryName($orig)) ($nameNoExt + ' - Copy')",
-"        if (Test-Path $copyDir) { Remove-Item -Recurse -Force $copyDir }",
-"        # Close the diff tab (currently active in MuseScore) before opening the saved file",
-"        $wsh = New-Object -ComObject WScript.Shell",
-"        if ($wsh.AppActivate('MuseScore')) {",
-"            Start-Sleep -Milliseconds 300",
-"            $wsh.SendKeys('^w')",
-"            Start-Sleep -Milliseconds 600",
-"            $wsh.SendKeys('{TAB}{ENTER}')",
-"            Start-Sleep -Milliseconds 200",
-"        }",
-"        # Open the saved file in MuseScore",
-"        Start-Process $savedPath",
 "        $form.Close()",
 "    }",
 "})",
@@ -746,12 +702,11 @@ MuseScore {
             + " \"" + origPath.replace(/\//g, "\\") + "\""
             + " \"" + copyPath.replace(/\//g, "\\") + "\""
             + " \"" + outPath.replace(/\//g, "\\") + "\""
-            + (origMsczPath ? " \"" + origMsczPath.replace(/\//g, "\\") + "\"" : "") + "\r\n"
+            + " \"" + msczPath.replace(/\//g, "\\") + "\"\r\n"
             + "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden"
             + " -File \"" + revPath.replace(/\//g, "\\") + "\""
             + " \"" + origPath.replace(/\//g, "\\") + "\""
-            + " \"" + outPath.replace(/\//g, "\\") + "\""
-            + (origMsczPath ? " \"" + origMsczPath.replace(/\//g, "\\") + "\"" : "") + "\r\n";
+            + " \"" + outPath.replace(/\//g, "\\") + "\"\r\n";
 
         dbg(log, "writing bat to " + batPath);
         writeFile(batPath, bat);
