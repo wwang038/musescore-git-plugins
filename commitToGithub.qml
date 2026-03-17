@@ -10,7 +10,7 @@ import FileIO 3.0
 
 MuseScore {
     id: commitPlugin
-    title: "Commit to GitHub"
+    title: "Commit to GitHub2"
     categoryCode: "composing-arranging-tools"
     menuPath: "Plugins.Commit to GitHub"
     description: "Commit scores to GitHub"
@@ -84,8 +84,8 @@ MuseScore {
             return;
         }
 
-        // Diff marker written by musescore diff.qml: Scores/<Name>/<Name>_diff.log.txt
-        var diffLogTxt = scoresDir + "/" + nameNoExt + "/" + nameNoExt + "_diff.log.txt";
+        // Diff marker written by musescore diff.qml (flat layout): Scores/<Name>_diff.log.txt
+        var diffLogTxt = scoresDir + "/" + nameNoExt + "_diff.log.txt";
 
         // ---- always write the commit bat (includes git fetch + remote-ahead check) ----
         fileIO.source = commitBat;
@@ -101,14 +101,14 @@ MuseScore {
             "",
             "git fetch origin >nul 2>nul",
             "",
+            "if exist \"%DIFFLOG%\" goto doPushForce",
+            "",
             "for /f \"delims=\" %%U in ('git rev-parse --abbrev-ref \"@{upstream}\" 2^>nul') do set \"UPSTREAM=%%U\"",
             "if not defined UPSTREAM goto doPushNormal",
             "",
             "for /f \"delims=\" %%L in ('git log \"HEAD..%UPSTREAM%\" --oneline -- \"%SCOREFILE%\" 2^>nul') do (set \"REMOTE_AHEAD=1\" & goto afterRemoteCheck)",
             ":afterRemoteCheck",
             "if not defined REMOTE_AHEAD goto doPushNormal",
-            "",
-            "if exist \"%DIFFLOG%\" goto doPushForce",
             "",
             "REM Remote is ahead and no diff marker: extract remote copy for MuseScore Diff and stop.",
             "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command \"try { " +
@@ -148,6 +148,7 @@ MuseScore {
             "if exist \"%SCOREFILE%\" git add \"%SCOREFILE%\"",
             "git commit -m \"Commit from MuseScore plugin: %SCORE%\"",
             "git push --force",
+            "if exist \"%DIFFLOG%\" del \"%DIFFLOG%\"",
             "goto end",
             "",
             ":end",

@@ -11,10 +11,10 @@ import FileIO 3.0
 
 MuseScore {
     id: diffPlugin
-    title: "MuseScore Diff2"
+    title: "Get Differences"
     categoryCode: "composing-arranging-tools"
     menuPath: "Plugins.MuseScore Diff"
-    description: "LCS measure diff against NAME - Copy"
+    description: "LCS measure diff against a Copy"
     version: "3.0"
     requiresScore: true
 
@@ -591,10 +591,14 @@ MuseScore {
 
         // ---- review dialog PS1 (Windows Forms, runs after diff completes) --
         var rev = [
-"param($orig, $out)",
+"param($orig, $out, $mscz, $copy)",
 "Add-Type -AssemblyName System.Windows.Forms",
 "Add-Type -AssemblyName System.Drawing",
 "[System.Windows.Forms.Application]::EnableVisualStyles()",
+"",
+"$logPath = [System.IO.Path]::ChangeExtension($out, '.log.txt')",
+"function Log($msg) { try { Add-Content -Path $logPath -Value $msg } catch {} }",
+"Log 'REVIEW started'",
 "",
 "$form = New-Object System.Windows.Forms.Form",
 "$form.Text = 'MuseScore Diff \u2014 Review & Save'",
@@ -604,6 +608,7 @@ MuseScore {
 "$form.MaximizeBox = $false",
 "$form.MinimizeBox = $false",
 "$form.BackColor  = [System.Drawing.Color]::FromArgb(245, 245, 245)",
+"$form.TopMost = $true",
 "",
 "$nl = [char]13 + [char]10",
 "",
@@ -647,13 +652,29 @@ MuseScore {
 "$saveBtn.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat",
 "$saveBtn.FlatAppearance.BorderColor = [System.Drawing.Color]::FromArgb(58, 170, 85)",
 "$saveBtn.Add_Click({",
+"    $target = $orig",
+"    if (Test-Path $mscz) { $target = $mscz }",
 "    $answer = [System.Windows.Forms.MessageBox]::Show(",
-"        'This will overwrite:' + [char]13 + [char]10 + [char]13 + [char]10 + '  ' + $orig + [char]13 + [char]10 + [char]13 + [char]10 + 'with the edited diff file, then delete the diff.' + [char]13 + [char]10 + 'This cannot be undone. Continue?',",
+"        'This will overwrite:' + [char]13 + [char]10 + [char]13 + [char]10 + '  ' + $target + [char]13 + [char]10 + [char]13 + [char]10 + 'with the edited diff file, then delete temp files (but keep the diff log).' + [char]13 + [char]10 + 'This cannot be undone. Continue?',",
 "        'Confirm Save',",
 "        [System.Windows.Forms.MessageBoxButtons]::YesNo,",
 "        [System.Windows.Forms.MessageBoxIcon]::Warning",
 "    )",
 "    if ($answer -eq [System.Windows.Forms.DialogResult]::Yes) {",
+"        $logPath = [System.IO.Path]::ChangeExtension($out, '.log.txt')",
+"        function Log2($msg) { try { Add-Content -Path $logPath -Value $msg } catch {} }",
+"",
+"        # Ensure the diff score is saved to disk before reading it",
+"        try {",
+"            $wsh = New-Object -ComObject WScript.Shell",
+"            if ($wsh.AppActivate('MuseScore')) {",
+"                Start-Sleep -Milliseconds 200",
+"                $wsh.SendKeys('^s')",
+"                Start-Sleep -Milliseconds 700",
+"            }",
+"        } catch {}",
+"        Log2 'SAVE: triggered Ctrl+S'",
+"",
 "        $xml = [xml](Get-Content -Path $out -Raw -Encoding UTF8)",
 "        foreach ($cn in @($xml.SelectNodes('//color'))) { $cn.ParentNode.RemoveChild($cn) | Out-Null }",
 "        $diffMarkChars = @([string][char]9654, [string][char]8214, [string][char]9664)",
@@ -661,8 +682,60 @@ MuseScore {
 "            $t = $st.SelectSingleNode('text')",
 "            if ($t -and $diffMarkChars -contains $t.InnerText.Trim()) { $st.ParentNode.RemoveChild($st) | Out-Null }",
 "        }",
-"        $xml.Save($orig)",
-"        Remove-Item -Path $out -Force",
+"",
+"        # Save cleaned diff to a temp .mscx",
+"        $tmpMscx = [System.IO.Path]::ChangeExtension($out, '.clean.mscx')",
+"        $xml.Save($tmpMscx)",
+"",
+"        if (Test-Path $mscz) {",
+"            # Update the embedded .mscx inside the .mscz zip (repo invariant: .mscz only).",
+"            try {",
+"                $before = (Get-Item $mscz).LastWriteTimeUtc",
+"                Add-Type -AssemblyName System.IO.Compression",
+"                Add-Type -AssemblyName System.IO.Compression.FileSystem",
+"                $zip = [System.IO.Compression.ZipFile]::Open($mscz, [System.IO.Compression.ZipArchiveMode]::Update)",
+"                $entry = $zip.Entries | Where-Object { $_.Name -like '*.mscx' } | Select-Object -First 1",
+"                if ($entry) {",
+"                    $entryName = $entry.FullName",
+"                    $entry.Delete()",
+"                    $newEntry = $zip.CreateEntry($entryName)",
+"                    $inStream  = [System.IO.File]::OpenRead($tmpMscx)",
+"                    $outStream = $newEntry.Open()",
+"                    $inStream.CopyTo($outStream)",
+"                    $outStream.Dispose(); $inStream.Dispose()",
+"                    Log2 ('SAVE: updated mscz entry ' + $entryName)",
+"                } else {",
+"                    Log2 'SAVE: no .mscx entry found in mscz'",
+"                }",
+"                $zip.Dispose()",
+"                $after = (Get-Item $mscz).LastWriteTimeUtc",
+"                Log2 ('SAVE: mscz lastwrite ' + $before + ' -> ' + $after)",
+"            } catch {",
+"                Log2 ('SAVE: ERROR updating mscz: ' + $_.Exception.Message)",
+"                [System.Windows.Forms.MessageBox]::Show('Failed to update the .mscz file. See the diff log for details.','Save Failed',[System.Windows.Forms.MessageBoxButtons]::OK,[System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null",
+"                return",
+"            }",
+"        } else {",
+"            # Fallback: overwrite .mscx original if .mscz doesn't exist.",
+"            $xml.Save($orig)",
+"        }",
+"",
+"        # Cleanup temp files (keep diff log as marker)",
+"        if (Test-Path $out)     { Remove-Item -Path $out -Force }",
+"        if (Test-Path $tmpMscx) { Remove-Item -Path $tmpMscx -Force }",
+"        if (Test-Path $orig)    { Remove-Item -Path $orig -Force }",
+"        if (Test-Path $copy)    { Remove-Item -Path $copy -Force }",
+"        $origDir = [System.IO.Path]::GetDirectoryName($orig)",
+"        $copyDir = [System.IO.Path]::GetDirectoryName($copy)",
+"        foreach ($p in @(",
+"            (Join-Path $origDir 'score_style.mss'),",
+"            (Join-Path $origDir 'viewsettings.json'),",
+"            (Join-Path $copyDir 'score_style.mss'),",
+"            (Join-Path $copyDir 'viewsettings.json')",
+"        )) {",
+"            if ($p -and (Test-Path $p)) { Remove-Item -Path $p -Force }",
+"        }",
+"        if (Test-Path $copyDir) { Remove-Item -Recurse -Force -Path $copyDir }",
 "        $form.Close()",
 "    }",
 "})",
@@ -687,8 +760,11 @@ MuseScore {
 "    $form.Activate()",
 "})",
 "",
-"$form.Controls.AddRange(@($title, $sep1, $body, $sep2, $saveBtn))",
-"$form.ShowDialog() | Out-Null"
+"$form.Controls.AddRange(@($title, $sep1, $body, $sep2, $autoSaveBtn, $saveBtn))",
+"$form.Add_Shown({ try { $form.Activate() | Out-Null } catch {} })",
+"Log 'REVIEW showing dialog'",
+"$null = $form.ShowDialog()",
+"Log 'REVIEW dialog closed'"
         ];
         writeFile(revPath, rev.join("\n"));
         dbg(log, "wrote review ps1 to " + revPath);
@@ -703,10 +779,17 @@ MuseScore {
             + " \"" + copyPath.replace(/\//g, "\\") + "\""
             + " \"" + outPath.replace(/\//g, "\\") + "\""
             + " \"" + msczPath.replace(/\//g, "\\") + "\"\r\n"
-            + "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden"
+            + "ping -n 2 127.0.0.1 >nul\r\n"
+            // Run review with a visible window style so WinForms reliably appears.
+            + "powershell.exe -ExecutionPolicy Bypass -WindowStyle Normal"
             + " -File \"" + revPath.replace(/\//g, "\\") + "\""
             + " \"" + origPath.replace(/\//g, "\\") + "\""
-            + " \"" + outPath.replace(/\//g, "\\") + "\"\r\n";
+            + " \"" + outPath.replace(/\//g, "\\") + "\""
+            + " \"" + msczPath.replace(/\//g, "\\") + "\""
+            + " \"" + copyPath.replace(/\//g, "\\") + "\"\r\n"
+            + "del \"" + ps1Path.replace(/\//g, "\\") + "\"\r\n"
+            + "del \"" + revPath.replace(/\//g, "\\") + "\"\r\n"
+            + "del \"%~f0\"\r\n";
 
         dbg(log, "writing bat to " + batPath);
         writeFile(batPath, bat);
@@ -716,18 +799,7 @@ MuseScore {
         writeFile(debugPath, log.join("\n"));
 
         Qt.openUrlExternally("file:///" + batPath.replace(/\\/g, "/"));
-
-        // Clean up temp script files after a short delay and quit.
-        // The bat/ps1 files are already loaded by the shell at this point.
-        var cleanup = Qt.createQmlObject(
-            'import QtQuick 2.0; Timer { interval: 8000; repeat: false }',
-            diffPlugin, "cleanupTimer");
-        cleanup.triggered.connect(function() {
-            fileIO.source = ps1Path; if (fileIO.exists()) fileIO.remove();
-            fileIO.source = revPath; if (fileIO.exists()) fileIO.remove();
-            fileIO.source = batPath; if (fileIO.exists()) fileIO.remove();
-            quit();
-        });
-        cleanup.start();
+        // Let the .bat self-delete after running both scripts.
+        quit();
     }
 }
