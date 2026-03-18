@@ -10,7 +10,7 @@ import FileIO 3.0
 
 MuseScore {
     id: commitPlugin
-    title: "Commit to GitHub2"
+    title: "Commit to GitHub"
     categoryCode: "composing-arranging-tools"
     menuPath: "Plugins.Commit to GitHub"
     description: "Commit scores to GitHub"
